@@ -21,12 +21,17 @@ def main():
     add1_unigram_probs, add1_bigram_probs = smoothed_n_gram_maker(train_corpus, 'add1')
     addk_unigram_probs, addk_bigram_probs = smoothed_n_gram_maker(train_corpus, 'addk')
 
-    # print("Unigram Probabilities: \n ---------------")
-    # for key in unigram_probs: 
-    #      print(f"P({key}) = {unigram_probs[key]*100}%")
-    # print("Bigram Probabilities: \n ---------------")
-    # for key in bigram_probs: 
-    #     print(f"P({key[1]} | {key[0]}) = {bigram_probs[key]*100}%")
+    print("Unigram Probabilities: \n ---------------")
+    for i, key in enumerate(unigram_probs):
+        if i == 12: 
+            break
+        print(f"P({key}) = {unigram_probs[key]*100}%")
+
+    print("\nBigram Probabilities: \n ---------------")
+    for i, key in enumerate(bigram_probs): 
+        if i == 12:
+            break
+        print(f"P({key[1]} | {key[0]}) = {bigram_probs[key]*100}%")
 
     # Print perplexities for unsmoothed and smoothed
     print("\nUnsmoothed perplexities: \n ---------------")
