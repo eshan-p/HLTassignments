@@ -48,6 +48,8 @@ def main():
     dataset_file = pd.read_csv('wiki_movie_plots_deduped.csv')
     corpus = preprocessing(dataset_file)
 
+    corpus = filter_rare_genres(corpus, min_count=50)
+
     lemmatize(corpus)
     vectorized_plots = vectorize_plots(corpus)
     # wordEmbedding(corpus)
@@ -81,6 +83,17 @@ def preprocessing(corpus):
     corpus['Genre'] = corpus['Genre'].str.lower()
 
     return corpus
+
+def filter_rare_genres(corpus, min_count=10):
+    """
+    Removes movies with genres that appear less than `min_count` times.
+    """
+    genre_counts = corpus['Genre'].value_counts()
+    frequent_genres = genre_counts[genre_counts >= min_count].index
+    filtered_corpus = corpus[corpus['Genre'].isin(frequent_genres)].reset_index(drop=True)
+    print(f"Filtered out rare genres. Remaining genres: {len(frequent_genres)}")
+    return filtered_corpus
+
 
 
 def encode_and_split(corpus, vectorized_plots):
@@ -120,11 +133,7 @@ def vectorize_plots(corpus):
     vectorized_plots = []
     for plot in corpus['Plot']:
         words = plot.split()
-        plot_matrix = []
-        for word in words:
-            if word in glove_model.key_to_index:
-                plot_matrix.append(glove_model[word])
-        plot_matrix = np.array(plot_matrix)
+        plot_matrix = np.array([glove_model[word] for word in words if word in glove_model.key_to_index])
         vectorized_plots.append(plot_matrix)
 
     # Pads based on average length of sequence
@@ -133,6 +142,7 @@ def vectorize_plots(corpus):
     for plot_matrix in vectorized_plots:
         desc_len += len(plot_matrix)
     desc_len = int(desc_len / len(vectorized_plots))
+    print("average plot length", desc_len)
     desc_vectors = pad_sequences(vectorized_plots, maxlen=desc_len, padding='post', truncating='post', dtype='float32')
 
     return desc_vectors
