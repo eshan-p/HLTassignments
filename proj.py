@@ -13,6 +13,8 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.metrics import accuracy_score
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer, PorterStemmer
@@ -20,7 +22,7 @@ from keras.api.preprocessing.sequence import pad_sequences
 from gensim.scripts.glove2word2vec import glove2word2vec
 from gensim.models.keyedvectors import KeyedVectors
 from keras.api.models import Sequential
-from keras.api.layers import Dense, Dropout, Flatten
+from keras.api.layers import Dense, Dropout, Flatten, Embedding, SimpleRNN
 from keras.api.callbacks import EarlyStopping
 from keras.api.utils import to_categorical
 
@@ -64,13 +66,22 @@ def main():
     print("Number of entries in training set:", datasets["train_plot"].size)
     print("Number of entries in testing set:", datasets["test_plot"].size)
     print("Number of entries in validation set:", datasets["val_plot"].size)
-
     num_classes = corpus['Genre_Encoded'].nunique()
-    model = train_ffnn_model(
+
+    ffnn_model = train_ffnn_model(
         datasets["train_plot"], datasets["train_genre"],
         datasets["val_plot"], datasets["val_genre"],
         num_classes
     )
+
+    rnn_model = RNN(datasets["train_plot"], datasets["train_genre"], 
+                    datasets["val_plot"], datasets["val_genre"], 
+                    num_classes) 
+
+    best_regression = regression_models(datasets["train_plot"], datasets["train_genre"], 
+                                        datasets["val_plot"], datasets["val_genre"])
+    
+    # print(best_regression)
 
 
 def preprocessing(corpus):
@@ -168,7 +179,6 @@ def vectorize_plots(corpus):
     return desc_vectors
 
 # FFNN 
-
 def train_ffnn_model(train_X, train_y, val_X, val_y, num_classes):
     print("Training Feedforward Neural Network...")
 
@@ -191,15 +201,66 @@ def train_ffnn_model(train_X, train_y, val_X, val_y, num_classes):
     early_stop = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
 
     # Train the model
-    history = model.fit(train_X, train_y_cat, validation_data=(val_X, val_y_cat), epochs=20, batch_size=64, callbacks=[early_stop])
+    history = model.fit(train_X, train_y_cat, validation_data=(val_X, val_y_cat), epochs=10, batch_size=64, callbacks=[early_stop])
 
     print("Model training complete.")
 
     return model
 
-
-# Linear Regression 
 # RNN 
+def RNN(train_X, train_Y, val_X, val_Y, num_classes):
+    print("Training Recurrent Neural Network...")
+
+    # creating RNN architecture and adding layers
+    model = Sequential()
+    model.add(SimpleRNN(64, return_sequences=True)) # could substitute SimpleRNN for LSTM here
+    model.add(SimpleRNN(64))
+    model.add(Dense(128, activation="relu"))
+    model.add(Dropout(0.4))
+    model.add(Dense(num_classes, activation="sigmoid"))
+
+    # compiling Tensorflow model created above
+    model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=["accuracy"])
+
+    train_Y_cat = to_categorical(train_Y, num_classes=num_classes)
+    val_Y_cat = to_categorical(val_Y, num_classes=num_classes)
+
+    early_stop = EarlyStopping(monitor="val_loss", patience=3, restore_best_weights=True)
+
+    history = model.fit(train_X, train_Y_cat, validation_data=(val_X, val_Y_cat), epochs=10, batch_size=64, callbacks=[early_stop])
+                        
+    return model
+
+
+# Compare and return best regression model (Linear vs. Logistic)
+def regression_models(train_X, train_Y, val_X, val_Y):
+    # flatten 3D vectors for 2D regression models
+    train_X_flat = np.mean(train_X, axis=1)
+    val_X_flat = np.mean(val_X, axis=1)
+
+    # linear regression model
+    linear_model = LinearRegression()
+    linear_model.fit(train_X_flat, train_Y)
+    linear_Y_pred = linear_model.predict(val_X_flat)
+    linear_Y_pred_rounded = np.round(linear_Y_pred).astype(int)
+    linear_Y_pred_rounded = np.clip(linear_Y_pred_rounded, 0, max(train_Y.max(), val_Y.max()))
+    linear_accuracy = accuracy_score(val_Y, linear_Y_pred_rounded)
+
+    # logistic regression model
+    logistic_model = LogisticRegression(max_iter=1000)
+    logistic_model.fit(train_X_flat, train_Y)
+    logistic_Y_pred = logistic_model.predict(val_X_flat)
+    logistic_accuracy = accuracy_score(val_Y, logistic_Y_pred)
+
+    # compare accuracies and return best regression model on data
+    if linear_accuracy >= logistic_accuracy:
+        print("Linear Regression accuracy: ", linear_accuracy)
+        return linear_model
+    else:
+        print("Logistic Regression accuracy: ", linear_accuracy)
+        return logistic_model
+
+
 # BERT 
 
 
