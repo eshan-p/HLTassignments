@@ -48,15 +48,17 @@ def main():
     dataset_file = pd.read_csv('wiki_movie_plots_deduped.csv')
     corpus = preprocessing(dataset_file)
 
+    corpus = normalize_genre_labels(corpus)
     corpus = filter_rare_genres(corpus, min_count=50)
 
     lemmatize(corpus)
     vectorized_plots = vectorize_plots(corpus)
-    # wordEmbedding(corpus)
 
     datasets = encode_and_split(corpus, vectorized_plots)
 
     print(corpus)
+    genre_set = set(corpus['Genre'])
+    print("Unique genres:", genre_set)
     print("Number of unique genres in dataset: ", corpus['Genre'].nunique())
 
     print("Number of entries in training set:", datasets["train_plot"].size)
@@ -95,6 +97,24 @@ def filter_rare_genres(corpus, min_count=10):
     return filtered_corpus
 
 
+def normalize_genre_labels(corpus):
+    """
+    Standardizes genre strings by:
+    - Replacing slashes, ampersands, etc. with commas
+    - Removing extra whitespace
+    - Sorting genres alphabetically
+    - Rejoining them with a single space
+    """
+    def normalize(genre_str):
+        # Lowercase and replace separators with commas
+        cleaned = re.sub(r'[\/&-]', ',', genre_str.lower())
+        # Split into individual genres, strip whitespace
+        parts = [part.strip() for part in cleaned.split(',') if part.strip()]
+        # Sort genres alphabetically and join with space
+        return ' '.join(sorted(parts))
+
+    corpus['Genre'] = corpus['Genre'].apply(normalize)
+    return corpus
 
 def encode_and_split(corpus, vectorized_plots):
     le = LabelEncoder()
