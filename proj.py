@@ -16,10 +16,14 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer, PorterStemmer
-from gensim.models import Word2Vec
 from keras.api.preprocessing.sequence import pad_sequences
 from gensim.scripts.glove2word2vec import glove2word2vec
 from gensim.models.keyedvectors import KeyedVectors
+from keras.api.models import Sequential
+from keras.api.layers import Dense, Dropout, Flatten
+from keras.api.callbacks import EarlyStopping
+from keras.api.utils import to_categorical
+
 
 
 
@@ -30,6 +34,7 @@ from gensim.models.keyedvectors import KeyedVectors
 
 # only run this once to convert the file
 # glove2word2vec(glove_input_file="glove.6B.300d.txt", word2vec_output_file="gensim_glove_vectors.txt")
+# load the word2vec format GloVe model
 glove_model = KeyedVectors.load_word2vec_format("gensim_glove_vectors.txt", binary=False)
 
 
@@ -39,21 +44,15 @@ lemmatizer = WordNetLemmatizer()
 # Define stopwords
 stop_words = set(stopwords.words('english'))
 
-# Load pre-trained Word2Vec model
-# word2vec = gensim.models.KeyedVectors.load("word2vec-google-news-300.kv")
-
 def main():
     dataset_file = pd.read_csv('wiki_movie_plots_deduped.csv')
     corpus = preprocessing(dataset_file)
 
     lemmatize(corpus)
-    vectorize_plots(corpus)
+    vectorized_plots = vectorize_plots(corpus)
     # wordEmbedding(corpus)
 
-    datasets = encode_and_split(corpus)
-    vectorized_train_plot = vectorization(datasets["train_plot"])
-    vectorized_test_plot = vectorization(datasets["test_plot"])
-    vectorized_val_plot = vectorization(datasets["val_plot"])
+    datasets = encode_and_split(corpus, vectorized_plots)
 
     print(corpus)
     print("Number of unique genres in dataset: ", corpus['Genre'].nunique())
@@ -61,6 +60,13 @@ def main():
     print("Number of entries in training set:", datasets["train_plot"].size)
     print("Number of entries in testing set:", datasets["test_plot"].size)
     print("Number of entries in validation set:", datasets["val_plot"].size)
+
+    num_classes = corpus['Genre_Encoded'].nunique()
+    model = train_ffnn_model(
+        datasets["train_plot"], datasets["train_genre"],
+        datasets["val_plot"], datasets["val_genre"],
+        num_classes
+    )
 
 
 def preprocessing(corpus):
@@ -77,15 +83,14 @@ def preprocessing(corpus):
     return corpus
 
 
-def encode_and_split(corpus):
+def encode_and_split(corpus, vectorized_plots):
     le = LabelEncoder()
     corpus['Genre_Encoded'] = le.fit_transform(corpus['Genre']) # convert each genre label to a unique integer (ex. comedy = 573)
 
-    plot = corpus['Plot']
     genre = corpus['Genre_Encoded']
 
     # split data into training, validation, and testing sets
-    train_plot, x_plot, train_genre, x_genre = train_test_split(plot, genre, random_state=104, test_size=0.2, shuffle=True)
+    train_plot, x_plot, train_genre, x_genre = train_test_split(vectorized_plots, genre, random_state=104, test_size=0.2, shuffle=True)
     val_plot, test_plot, val_genre, test_genre = train_test_split(x_plot, x_genre, random_state=104, test_size=0.5, shuffle=True)
 
     return {
@@ -97,14 +102,6 @@ def encode_and_split(corpus):
             "test_genre": test_genre, 
            }
 
-# Vectorization of input 
-def vectorization(corpus):
-    vectorizer = TfidfVectorizer()
-    vectorized_plots = vectorizer.fit_transform(corpus)
-
-    return vectorized_plots
-
-
 def lemmatize(corpus):
     # lemmatize each word in the corpus
     lemmatized_corpus = []
@@ -115,7 +112,6 @@ def lemmatize(corpus):
         lemmatized_plot = ' '.join(words)
         lemmatized_corpus.append(lemmatized_plot)
     corpus['Plot'] = lemmatized_corpus
-    # print(corpus)
     return lemmatized_corpus
 
 # Word Embedding 
@@ -130,48 +126,47 @@ def vectorize_plots(corpus):
                 plot_matrix.append(glove_model[word])
         plot_matrix = np.array(plot_matrix)
         vectorized_plots.append(plot_matrix)
-    
+
+    # Pads based on average length of sequence
+    # TODO: maybe try median instead?
     desc_len = 0
     for plot_matrix in vectorized_plots:
         desc_len += len(plot_matrix)
-    desc_len /= int(len(vectorized_plots))
+    desc_len = int(desc_len / len(vectorized_plots))
     desc_vectors = pad_sequences(vectorized_plots, maxlen=desc_len, padding='post', truncating='post', dtype='float32')
 
+    return desc_vectors
 
-
-'''
-def wordEmbedding(corpus):
-    embeddingDictionary = {} 
-    #load pretrained GloVe into dictionary 
-    with open("glove.6B.300d.txt", encoding="utf8") as f: 
-        for line in f: 
-            values  = line.split() 
-            word = values[0]
-            vector = np.asarray(values[1:], dtype='float32')
-            embeddingDictionary[word] = vector
-    plots = []
-    for plot in corpus['Plot']: 
-        words = plot.split()
-        plot_matrix = []
-        for word in words:
-            if word in embeddingDictionary:
-                vector = embeddingDictionary[word]
-                plot_matrix.append(vector)
-        # plot_matrix = np.array(plot_matrix)
-        plots.append(plot_matrix)
-    
-
-    print(plots)
-
-    desc_len = 0
-    for plot_matrix in plots:
-        desc_len += len(plot_matrix)
-    desc_len /= int(len(plots))
-    desc_vectors = pad_sequences(plots, maxlen=desc_len, padding='post', truncating='post', dtype='float32')
-
-    # print(desc_vectors)
-'''
 # FFNN 
+
+def train_ffnn_model(train_X, train_y, val_X, val_y, num_classes):
+    print("Training Feedforward Neural Network...")
+
+    # Convert labels to categorical format (one-hot encoding)
+    train_y_cat = to_categorical(train_y, num_classes=num_classes)
+    val_y_cat = to_categorical(val_y, num_classes=num_classes)
+
+    # Define the FFNN model
+    model = Sequential()
+    model.add(Flatten(input_shape=(train_X.shape[1], train_X.shape[2])))
+    model.add(Dense(256, activation='relu'))
+    model.add(Dropout(0.3))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.3))
+    model.add(Dense(num_classes, activation='softmax'))
+
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+    # Early stopping to prevent overfitting
+    early_stop = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+
+    # Train the model
+    history = model.fit(train_X, train_y_cat, validation_data=(val_X, val_y_cat), epochs=20, batch_size=64, callbacks=[early_stop])
+
+    print("Model training complete.")
+
+    return model
+
 
 # Linear Regression 
 # RNN 
