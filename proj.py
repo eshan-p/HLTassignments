@@ -60,12 +60,14 @@ def main():
 
     print(corpus)
     genre_set = set(corpus['Genre'])
+
     print("Unique genres:", genre_set)
     print("Number of unique genres in dataset: ", corpus['Genre'].nunique())
 
     print("Number of entries in training set:", datasets["train_plot"].size)
     print("Number of entries in testing set:", datasets["test_plot"].size)
     print("Number of entries in validation set:", datasets["val_plot"].size)
+    
     num_classes = corpus['Genre_Encoded'].nunique()
 
     ffnn_model = train_ffnn_model(
@@ -78,10 +80,29 @@ def main():
                     datasets["val_plot"], datasets["val_genre"], 
                     num_classes) 
 
-    best_regression = regression_models(datasets["train_plot"], datasets["train_genre"], 
+    linear_model, logistic_model = regression_models(datasets["train_plot"], datasets["train_genre"], 
                                         datasets["val_plot"], datasets["val_genre"])
     
-    # print(best_regression)
+    test_genre_int = datasets["test_genre"].copy()
+    datasets["test_genre"] = to_categorical(datasets["test_genre"], num_classes)
+    X_test_flat = np.mean(datasets["test_plot"], axis=1)
+
+    
+    results = []
+    results.append({"Model": "Feedforward Neural Network", 
+                    "Accuracy": ffnn_model.evaluate(datasets["test_plot"], datasets["test_genre"])[1]})
+    results.append({"Model": "Recurrent Neural Network", 
+                    "Accuracy": rnn_model.evaluate(datasets["test_plot"], datasets["test_genre"])[1]}) 
+    results.append({"Model": "Linear Regression", 
+                    "Accuracy": linear_model.score(X_test_flat, test_genre_int)})
+    results.append({"Model": "Logistic Regression", 
+                    "Accuracy": logistic_model.score(X_test_flat, test_genre_int)})
+
+    results_df = pd.DataFrame(results)
+
+    print("\nModel Performance Results:")
+    print("===================================")
+    print(results_df)
 
 
 def preprocessing(corpus):
@@ -220,7 +241,7 @@ def RNN(train_X, train_Y, val_X, val_Y, num_classes):
     model.add(Dense(num_classes, activation="sigmoid"))
 
     # compiling Tensorflow model created above
-    model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=["accuracy"])
+    model.compile(optimizer="rmsprop", loss="categorical_crossentropy", metrics=["accuracy"])
 
     train_Y_cat = to_categorical(train_Y, num_classes=num_classes)
     val_Y_cat = to_categorical(val_Y, num_classes=num_classes)
@@ -252,14 +273,17 @@ def regression_models(train_X, train_Y, val_X, val_Y):
     logistic_Y_pred = logistic_model.predict(val_X_flat)
     logistic_accuracy = accuracy_score(val_Y, logistic_Y_pred)
 
+    '''
     # compare accuracies and return best regression model on data
     if linear_accuracy >= logistic_accuracy:
         print("Linear Regression accuracy: ", linear_accuracy)
-        return linear_model
+       return linear_model
     else:
         print("Logistic Regression accuracy: ", linear_accuracy)
         return logistic_model
+    '''
 
+    return linear_model, logistic_model
 
 # BERT 
 
