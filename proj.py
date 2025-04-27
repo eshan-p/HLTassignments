@@ -27,14 +27,13 @@ from keras.api.callbacks import EarlyStopping
 from keras.api.utils import to_categorical
 
 
-
-
 # Download NLTK data  --  only run once
 # nltk.download('stopwords')
 # nltk.download('wordnet')
 # nltk.download('omw-1.4')
 
 # only run this once to convert the file
+# converts GloVe format to word2vec format
 # glove2word2vec(glove_input_file="glove.6B.300d.txt", word2vec_output_file="gensim_glove_vectors.txt")
 # load the word2vec format GloVe model
 glove_model = KeyedVectors.load_word2vec_format("gensim_glove_vectors.txt", binary=False)
@@ -47,47 +46,54 @@ lemmatizer = WordNetLemmatizer()
 stop_words = set(stopwords.words('english'))
 
 def main():
+    # read in dataset and basic preprocessing
     dataset_file = pd.read_csv('wiki_movie_plots_deduped.csv')
     corpus = preprocessing(dataset_file)
 
+    # standardize genre labels and remove rare genres
     corpus = normalize_genre_labels(corpus)
     corpus = filter_rare_genres(corpus, min_count=50)
 
+    # lemmatize plot descriptions and vectorize them
     lemmatize(corpus)
     vectorized_plots = vectorize_plots(corpus)
 
+    # encode genre labels and split data into training, validation, and testing sets
     datasets = encode_and_split(corpus, vectorized_plots)
 
+    # print corpus and genre set for info
     print(corpus)
     genre_set = set(corpus['Genre'])
 
     print("Unique genres:", genre_set)
     print("Number of unique genres in dataset: ", corpus['Genre'].nunique())
-
-    print("Number of entries in training set:", datasets["train_plot"].size)
-    print("Number of entries in testing set:", datasets["test_plot"].size)
-    print("Number of entries in validation set:", datasets["val_plot"].size)
     
+    # number of output classes (genres)
     num_classes = corpus['Genre_Encoded'].nunique()
 
+    # ffnn model
     ffnn_model = train_ffnn_model(
         datasets["train_plot"], datasets["train_genre"],
         datasets["val_plot"], datasets["val_genre"],
         num_classes
     )
 
+    # rnn model
     rnn_model = RNN(datasets["train_plot"], datasets["train_genre"], 
                     datasets["val_plot"], datasets["val_genre"], 
                     num_classes) 
 
+    # regression models
     linear_model, logistic_model = regression_models(datasets["train_plot"], datasets["train_genre"], 
                                         datasets["val_plot"], datasets["val_genre"])
     
+    # evaluate models on test set
     test_genre_int = datasets["test_genre"].copy()
     datasets["test_genre"] = to_categorical(datasets["test_genre"], num_classes)
     X_test_flat = np.mean(datasets["test_plot"], axis=1)
 
     
+    # evaluate models and store results
     results = []
     results.append({"Model": "Feedforward Neural Network", 
                     "Accuracy": ffnn_model.evaluate(datasets["test_plot"], datasets["test_genre"])[1]})
@@ -98,6 +104,7 @@ def main():
     results.append({"Model": "Logistic Regression", 
                     "Accuracy": logistic_model.score(X_test_flat, test_genre_int)})
 
+    # print results
     results_df = pd.DataFrame(results)
 
     print("\nModel Performance Results:")
@@ -134,7 +141,7 @@ def normalize_genre_labels(corpus):
     Standardizes genre strings by:
     - Replacing slashes, ampersands, etc. with commas
     - Removing extra whitespace
-    - Sorting genres alphabetically
+    - Sorting genre components alphabetically
     - Rejoining them with a single space
     """
     def normalize(genre_str):
@@ -142,7 +149,7 @@ def normalize_genre_labels(corpus):
         cleaned = re.sub(r'[\/&-]', ',', genre_str.lower())
         # Split into individual genres, strip whitespace
         parts = [part.strip() for part in cleaned.split(',') if part.strip()]
-        # Sort genres alphabetically and join with space
+        # Sort genre components alphabetically and join with space
         return ' '.join(sorted(parts))
 
     corpus['Genre'] = corpus['Genre'].apply(normalize)
@@ -150,7 +157,8 @@ def normalize_genre_labels(corpus):
 
 def encode_and_split(corpus, vectorized_plots):
     le = LabelEncoder()
-    corpus['Genre_Encoded'] = le.fit_transform(corpus['Genre']) # convert each genre label to a unique integer (ex. comedy = 573)
+    # convert each genre label to a unique integer (ex. comedy = 573)
+    corpus['Genre_Encoded'] = le.fit_transform(corpus['Genre'])
 
     genre = corpus['Genre_Encoded']
 
@@ -174,8 +182,9 @@ def lemmatize(corpus):
         words = plot.split()
         words = [word for word in words if word not in stop_words]  # Remove stopwords
         words = [lemmatizer.lemmatize(word) for word in words]  # Lemmatize words
-        lemmatized_plot = ' '.join(words)
-        lemmatized_corpus.append(lemmatized_plot)
+        lemmatized_plot = ' '.join(words) # Join words back into a string
+        lemmatized_corpus.append(lemmatized_plot) # Store lemmatized plot
+    # update corpus with lemmatized plots
     corpus['Plot'] = lemmatized_corpus
     return lemmatized_corpus
 
@@ -185,6 +194,8 @@ def vectorize_plots(corpus):
     vectorized_plots = []
     for plot in corpus['Plot']:
         words = plot.split()
+        # replace word with its GloVe vector if it exists in the model
+        # otherwise, ignore the word
         plot_matrix = np.array([glove_model[word] for word in words if word in glove_model.key_to_index])
         vectorized_plots.append(plot_matrix)
 
@@ -193,8 +204,10 @@ def vectorize_plots(corpus):
     desc_len = 0
     for plot_matrix in vectorized_plots:
         desc_len += len(plot_matrix)
+    # divide by number of plots to get average length
     desc_len = int(desc_len / len(vectorized_plots))
-    print("average plot length", desc_len)
+    print("Average plot length", desc_len)
+    # pad sequences to the same length
     desc_vectors = pad_sequences(vectorized_plots, maxlen=desc_len, padding='post', truncating='post', dtype='float32')
 
     return desc_vectors
@@ -216,6 +229,7 @@ def train_ffnn_model(train_X, train_y, val_X, val_y, num_classes):
     model.add(Dropout(0.3))
     model.add(Dense(num_classes, activation='softmax'))
 
+    # compiling Tensorflow model created above
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
     # Early stopping to prevent overfitting
@@ -246,8 +260,10 @@ def RNN(train_X, train_Y, val_X, val_Y, num_classes):
     train_Y_cat = to_categorical(train_Y, num_classes=num_classes)
     val_Y_cat = to_categorical(val_Y, num_classes=num_classes)
 
+    # Early stopping to prevent overfitting
     early_stop = EarlyStopping(monitor="val_loss", patience=3, restore_best_weights=True)
 
+    # Train the model
     history = model.fit(train_X, train_Y_cat, validation_data=(val_X, val_Y_cat), epochs=10, batch_size=64, callbacks=[early_stop])
                         
     return model
@@ -273,19 +289,6 @@ def regression_models(train_X, train_Y, val_X, val_Y):
     logistic_Y_pred = logistic_model.predict(val_X_flat)
     logistic_accuracy = accuracy_score(val_Y, logistic_Y_pred)
 
-    '''
-    # compare accuracies and return best regression model on data
-    if linear_accuracy >= logistic_accuracy:
-        print("Linear Regression accuracy: ", linear_accuracy)
-       return linear_model
-    else:
-        print("Logistic Regression accuracy: ", linear_accuracy)
-        return logistic_model
-    '''
-
     return linear_model, logistic_model
-
-# BERT 
-
 
 main()
